@@ -14,9 +14,15 @@
         body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
         #map { height: calc(100vh - 64px); width: 100%; z-index: 1; }
         .panel-anim { transition: transform 0.3s ease-in-out; }
-        .custom-scroll::-webkit-scrollbar { width: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        
+        /* Biztonságos görgetősáv kényszerítése a panelre */
+        .panel-scroll {
+            overflow-y: auto !important;
+            max-height: 50vh !important;
+        }
+        .panel-scroll::-webkit-scrollbar { width: 6px; }
+        .panel-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
+        .panel-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -66,9 +72,9 @@
 
         <div id="map"></div>
 
-        <div id="infoPanel" class="absolute bottom-0 left-0 right-0 z-[1001] bg-white rounded-t-2xl shadow-2xl p-5 border-t border-gray-200 panel-anim translate-y-full max-h-[75vh] overflow-y-auto custom-scroll hidden">
-            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4 cursor-pointer" onclick="closeInfoPanel()"></div>
-            <div id="infoContent" class="max-w-2xl mx-auto"></div>
+        <div id="infoPanel" class="absolute bottom-0 left-0 right-0 z-[1001] bg-white rounded-t-2xl shadow-2xl p-5 border-t border-gray-200 panel-anim translate-y-full panel-scroll hidden">
+            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-3 cursor-pointer" onclick="closeInfoPanel()"></div>
+            <div id="infoContent" class="max-w-2xl mx-auto pb-6"></div>
         </div>
     </div>
 
@@ -106,14 +112,12 @@
                 const parsedLines = parseCSV(csvText);
                 
                 if (parsedLines.length < 2) return;
-                
                 const headers = parsedLines[0].map(h => h.trim().toLowerCase());
                 
                 muzeumok = parsedLines.slice(1).map(row => {
                     let obj = {};
                     headers.forEach((header, index) => {
                         let key = header;
-                        // Egységesítjük az oszlopneveket kis- és nagybetűk ellen
                         if (header === 'fokat') key = 'foKat';
                         if (header === 'alkat') key = 'alKat';
                         obj[key] = row[index] ? row[index].trim() : "";
@@ -129,7 +133,6 @@
                 document.getElementById("loader").classList.add("hidden");
             } catch (error) {
                 console.error("Hiba:", error);
-                document.getElementById("loader").innerText = "❌ Hiba az adatok letöltésekor!";
             }
         }
 
@@ -181,40 +184,38 @@
             });
         }
 
-        // MEGJELENÍTÉS JAVÍTÁSA (Biztosan a jó változókat olvassa be)
         function showInfo(m) {
             const panel = document.getElementById("infoPanel");
             const content = document.getElementById("infoContent");
             const isFav = favorites.includes(m.id);
 
-            // A diagnosztika alapján ezek kisbetűsek lettek a parzolás után
             const websiteLink = m.link;
             const rawImages = m.kep;
 
             let imagesHTML = '';
             if (rawImages) {
-                // Szétszedjük a linkeket vessző mentén, ha többet adtál meg
                 const imageArray = rawImages.split(',').map(img => img.trim()).filter(img => img.startsWith('http'));
                 imageArray.forEach(imgUrl => {
-                    imagesHTML += `<img src="${imgUrl}" class="w-full h-52 object-cover rounded-xl mb-3 shadow-md" onerror="this.style.display='none'">`;
+                    imagesHTML += `<img src="${imgUrl}" class="w-full h-44 object-cover rounded-xl mt-3 shadow-sm" onerror="this.style.display='none'">`;
                 });
             }
 
+            // ÚJ ELRENDEZÉS: A gomb felkerült a leírás alá, a kép elé!
             content.innerHTML = `
                 <div class="flex justify-between items-start gap-2 mb-1">
-                    <h3 class="text-xl font-bold text-slate-800">${m.nev || 'Névtelen múzeum'}</h3>
-                    <button onclick="toggleFav(${m.id})" class="text-2xl focus:outline-none p-1">${isFav ? '❤️' : '🤍'}</button>
+                    <h3 class="text-lg font-bold text-slate-800">${m.nev || 'Névtelen múzeum'}</h3>
+                    <button onclick="toggleFav(${m.id})" class="text-xl focus:outline-none p-1">${isFav ? '❤️' : '🤍'}</button>
                 </div>
-                <p class="text-xs text-gray-400 font-bold uppercase mb-3">
+                <p class="text-[11px] text-gray-400 font-bold uppercase mb-2">
                     ${m.varos || ''}, ${m.orszag || ''} | ${m.foKat || ''} → ${m.alKat || ''}
                 </p>
-                <p class="text-sm text-gray-600 leading-relaxed mb-5">${m.leiras || 'Nincs leírás megadva.'}</p>
+                <p class="text-xs text-gray-600 leading-relaxed mb-4">${m.leiras || 'Nincs leírás megadva.'}</p>
                 
-                <div class="space-y-3 mb-5">
+                ${websiteLink ? `<a href="${websiteLink}" target="_blank" class="block w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider shadow-md transition-colors mb-2">Hivatalos Weboldal Megnyitása 🔗</a>` : ''}
+                
+                <div class="space-y-2">
                     ${imagesHTML}
                 </div>
-
-                ${websiteLink ? `<a href="${websiteLink}" target="_blank" class="block w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider shadow-md transition-colors">Hivatalos Weboldal Megnyitása 🔗</a>` : ''}
             `;
 
             panel.classList.remove("hidden");
