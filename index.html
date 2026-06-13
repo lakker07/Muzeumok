@@ -14,6 +14,10 @@
         body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
         #map { height: calc(100vh - 64px); width: 100%; z-index: 1; }
         .panel-anim { transition: transform 0.3s ease-in-out; }
+        /* Egyedi görgetősáv a szép kinézetért */
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -63,9 +67,9 @@
 
         <div id="map"></div>
 
-        <div id="infoPanel" class="absolute bottom-0 left-0 right-0 z-[1001] bg-white rounded-t-2xl shadow-2xl p-5 border-t border-gray-200 panel-anim translate-y-full max-h-[60vh] overflow-y-auto hidden">
-            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4" onclick="closeInfoPanel()"></div>
-            <div id="infoContent"></div>
+        <div id="infoPanel" class="absolute bottom-0 left-0 right-0 z-[1001] bg-white rounded-t-2xl shadow-2xl p-5 border-t border-gray-200 panel-anim translate-y-full max-h-[75vh] overflow-y-auto custom-scroll hidden">
+            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4 cursor-pointer" onclick="closeInfoPanel()"></div>
+            <div id="infoContent" class="max-w-2xl mx-auto"></div>
         </div>
     </div>
 
@@ -85,7 +89,7 @@
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-        // CSV szöveg sorbontása intelligensen (kezeli a macskakörmöket és vesszőket)
+        // Intelligens CSV parzoló
         function parseCSV(text) {
             let lines = [];
             let row = [""];
@@ -111,7 +115,7 @@
             return lines;
         }
 
-        // Adatok letöltése a Google Drive-ról
+        // Adatok letöltése és kulcsok kisbetűsítése a hibák elkerülésére
         async function loadDataFromSheet() {
             try {
                 const response = await fetch(SHEET_CSV_URL);
@@ -120,16 +124,22 @@
                 
                 if (parsedLines.length < 2) return;
                 
-                const headers = parsedLines[0].map(h => h.trim());
+                // Kisbetűssé tesszük a fejlécet, hogy ne számítson a Táblázatbeli elírás (pl. Kep vs kep)
+                const headers = parsedLines[0].map(h => h.trim().toLowerCase());
                 
                 muzeumok = parsedLines.slice(1).map(row => {
                     let obj = {};
                     headers.forEach((header, index) => {
-                        obj[header] = row[index] ? row[index].trim() : "";
+                        // Alapvető kulcsok normalizálása
+                        let key = header;
+                        if (header === 'fokat') key = 'foKat';
+                        if (header === 'alkat') key = 'alKat';
+                        
+                        obj[key] = row[index] ? row[index].trim() : "";
                     });
-                    obj.id = parseInt(obj.id);
-                    obj.lat = parseFloat(obj.lat);
-                    obj.lng = parseFloat(obj.lng);
+                    obj.id = parseInt(obj.id || obj.ID);
+                    obj.lat = parseFloat(obj.lat || obj.Lat || obj.latitude);
+                    obj.lng = parseFloat(obj.lng || obj.Lng || obj.longitude || obj.long);
                     return obj;
                 }).filter(m => !isNaN(m.lat) && !isNaN(m.lng));
 
@@ -142,7 +152,6 @@
             }
         }
 
-        // Dinamikus szűrőlisták építése a táblázat adatai alapján
         function buildFilterOptions() {
             let orszagok = new Set();
             let fokategoriak = new Set();
@@ -157,29 +166,18 @@
                 }
             });
 
-            // Ország lista feltöltése
             const countrySelect = document.getElementById("countryFilter");
             countrySelect.innerHTML = '<option value="">Összes ország</option>';
-            Array.from(orszagok).sort().forEach(o => {
-                countrySelect.innerHTML += `<option value="${o}">${o}</option>`;
-            });
+            Array.from(orszagok).sort().forEach(o => countrySelect.innerHTML += `<option value="${o}">${o}</option>`);
 
-            // Főkategória lista feltöltése
             const mainSelect = document.getElementById("mainCategory");
             mainSelect.innerHTML = '<option value="">Összes kategória</option>';
-            Array.from(fokategoriak).sort().forEach(f => {
-                mainSelect.innerHTML += `<option value="${f}">${f}</option>`;
-            });
+            Array.from(fokategoriak).sort().forEach(f => mainSelect.innerHTML += `<option value="${f}">${f}</option>`);
 
-            // Set-ek átalakítása tömbbé az alkategóriáknál
-            Object.keys(alkategoriak).forEach(k => {
-                alkategoriak[k] = Array.from(alkategoriak[k]).sort();
-            });
+            Object.keys(alkategoriak).forEach(k => alkategoriak[k] = Array.from(alkategoriak[k]).sort());
         }
 
-        function toggleFilterPanel() {
-            document.getElementById("filterPanel").classList.toggle("hidden");
-        }
+        function toggleFilterPanel() { document.getElementById("filterPanel").classList.toggle("hidden"); }
 
         function updateSubCategories() {
             const mainCat = document.getElementById("mainCategory").value;
@@ -217,20 +215,40 @@
             });
         }
 
+        // Információs panel generálása több képpel és biztos linkkezeléssel
         function showInfo(m) {
             const panel = document.getElementById("infoPanel");
             const content = document.getElementById("infoContent");
             const isFav = favorites.includes(m.id);
 
+            // Megkeressük a linket és a képet a lehetséges elnevezések szerint
+            const websiteLink = m.link || m.weboldal || m.url || m.Link;
+            const rawImages = m.kep || m.kepek || m.Kep || m.image;
+
+            // Képek szétszedése vessző mentén galériává
+            let imagesHTML = '';
+            if (rawImages) {
+                const imageArray = rawImages.split(',').map(img => img.trim()).filter(img => img.startsWith('http'));
+                imageArray.forEach(imgUrl => {
+                    imagesHTML += `<img src="${imgUrl}" class="w-full h-48 object-cover rounded-xl mb-3 shadow-md" onerror="this.style.display='none'">`;
+                });
+            }
+
             content.innerHTML = `
                 <div class="flex justify-between items-start gap-2 mb-1">
-                    <h3 class="text-lg font-bold text-slate-800">${m.nev}</h3>
-                    <button onclick="toggleFav(${m.id})" class="text-xl focus:outline-none p-1">${isFav ? '❤️' : '🤍'}</button>
+                    <h3 class="text-xl font-bold text-slate-800">${m.nev || m.Nev || 'Névtelen múzeum'}</h3>
+                    <button onclick="toggleFav(${m.id})" class="text-2xl focus:outline-none p-1">${isFav ? '❤️' : '🤍'}</button>
                 </div>
-                <p class="text-xs text-gray-400 font-semibold uppercase mb-2">${m.varos}, ${m.orszag} | ${m.foKat} -> ${m.alKat}</p>
-                <p class="text-xs text-gray-600 leading-relaxed mb-3">${m.leiras}</p>
-                ${m.kep ? `<img src="${m.kep}" class="w-full h-32 object-cover rounded-xl mb-3 shadow-inner">` : ''}
-                ${m.link ? `<a href="${m.link}" target="_blank" class="block w-full text-center bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs shadow">Hivatalos Weboldal Megnyitása 🔗</a>` : ''}
+                <p class="text-xs text-gray-400 font-bold uppercase mb-3">
+                    ${m.varos || ''}, ${m.orszag || ''} | ${m.foKat || ''} → ${m.alKat || ''}
+                </p>
+                <p class="text-sm text-gray-600 leading-relaxed mb-4">${m.leiras || m.Leiras || 'Nincs leírás megadva.'}</p>
+                
+                <div class="space-y-3 mb-4">
+                    ${imagesHTML}
+                </div>
+
+                ${websiteLink ? `<a href="${websiteLink}" target="_blank" class="block w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider shadow-md transition-colors">Hivatalos Weboldal Megnyitása 🔗</a>` : ''}
             `;
 
             panel.classList.remove("hidden");
@@ -284,7 +302,6 @@
             map.setView([47.5, 13.5], 5);
         }
 
-        // Indításkor adatok letöltése
         loadDataFromSheet();
     </script>
 </body>
