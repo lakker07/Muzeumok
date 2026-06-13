@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Élő Európai Múzeum Térkép</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
+        #map { height: calc(100vh - 64px); width: 100%; z-index: 1; }
+        .panel-anim { transition: transform 0.3s ease-in-out; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+    <header class="bg-slate-900 text-white px-4 flex justify-between items-center h-16 shadow-lg relative z-50">
+        <h1 class="text-base font-bold tracking-tight flex items-center gap-1">🌍 Élő Múzeum Térkép</h1>
+        <div class="flex gap-1.5">
+            <button onclick="toggleFavoritesMode()" id="favToggleBtn" class="bg-amber-600 hover:bg-amber-500 px-2.5 py-1.5 rounded text-xs font-semibold shadow">❤️ Kedvencek</button>
+            <button onclick="clearFilters()" class="bg-rose-600 hover:bg-rose-500 px-2.5 py-1.5 rounded text-xs font-semibold shadow">Töröl</button>
+        </div>
+    </header>
+
+    <div class="relative w-full h-full flex flex-col">
+        
+        <div class="absolute top-3 left-3 z-[1000]">
+            <button onclick="toggleFilterPanel()" class="bg-blue-600 text-white font-bold px-4 py-2 rounded-lg shadow-md text-xs uppercase tracking-wider">🔍 Szűrők</button>
+        </div>
+
+        <div id="loader" class="absolute inset-0 bg-slate-900/80 z-[2000] flex flex-col justify-center items-center text-white font-bold text-sm gap-3">
+            <div class="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            Múzeumok betöltése a Google Táblázatból...
+        </div>
+
+        <div id="filterPanel" class="absolute top-14 left-3 z-[1000] bg-white/95 backdrop-blur p-4 rounded-xl shadow-2xl w-64 border border-gray-200 hidden">
+            <div class="flex justify-between items-center mb-3 border-b pb-1">
+                <h2 class="font-bold text-gray-700 text-sm">Szűrés</h2>
+                <button onclick="toggleFilterPanel()" class="text-gray-400 text-lg">&times;</button>
+            </div>
+            
+            <div class="mb-3">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Ország</label>
+                <select id="countryFilter" onchange="filterData()" class="w-full p-2 border rounded text-xs bg-gray-50 text-gray-700 font-medium"></select>
+            </div>
+
+            <div class="mb-3">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Főkategória</label>
+                <select id="mainCategory" onchange="updateSubCategories()" class="w-full p-2 border rounded text-xs bg-gray-50 text-gray-700 font-medium"></select>
+            </div>
+
+            <div class="mb-1">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Alkategória</label>
+                <select id="subCategory" onchange="filterData()" class="w-full p-2 border rounded text-xs bg-gray-50 text-gray-700 font-medium" disabled>
+                    <option value="">Válassz főkategóriát...</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="map"></div>
+
+        <div id="infoPanel" class="absolute bottom-0 left-0 right-0 z-[1001] bg-white rounded-t-2xl shadow-2xl p-5 border-t border-gray-200 panel-anim translate-y-full max-h-[60vh] overflow-y-auto hidden">
+            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4" onclick="closeInfoPanel()"></div>
+            <div id="infoContent"></div>
+        </div>
+    </div>
+
+    <script>
+        // A te Google Táblázatod egyedi azonosítója
+        const SPREADSHEET_ID = '1sl8sEfmq8-mho1tKeMzzG0tCuGb_RQySNIk3NbMY2Qw';
+        const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv&gid=0`;
+
+        let muzeumok = [];
+        let alkategoriak = {};
+        let markers = [];
+        let favorites = JSON.parse(localStorage.getItem('museum_favs')) || [];
+        let favoritesMode = false;
+
+        // Térkép inicializálása Közép-Európára
+        const map = L.map('map', { zoomControl: false }).setView([47.5, 13.5], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        // CSV szöveg sorbontása intelligensen (kezeli a macskakörmöket és vesszőket)
+        function parseCSV(text) {
+            let lines = [];
+            let row = [""];
+            let inQuotes = false;
+
+            for (let i = 0; i < text.length; i++) {
+                let c = text[i];
+                let next = text[i+1];
+                if (c === '"') {
+                    if (inQuotes && next === '"') { row[row.length - 1] += '"'; i++; }
+                    else { inQuotes = !inQuotes; }
+                } else if (c === ',' && !inQuotes) {
+                    row.push("");
+                } else if ((c === '\r' || c === '\n') && !inQuotes) {
+                    if (c === '\r' && next === '\n') { i++; }
+                    lines.push(row);
+                    row = [""];
+                } else {
+                    row[row.length - 1] += c;
+                }
+            }
+            if (row.length > 1 || row[0] !== "") lines.push(row);
+            return lines;
+        }
+
+        // Adatok letöltése a Google Drive-ról
+        async function loadDataFromSheet() {
+            try {
+                const response = await fetch(SHEET_CSV_URL);
+                const csvText = await response.text();
+                const parsedLines = parseCSV(csvText);
+                
+                if (parsedLines.length < 2) return;
+                
+                const headers = parsedLines[0].map(h => h.trim());
+                
+                muzeumok = parsedLines.slice(1).map(row => {
+                    let obj = {};
+                    headers.forEach((header, index) => {
+                        obj[header] = row[index] ? row[index].trim() : "";
+                    });
+                    obj.id = parseInt(obj.id);
+                    obj.lat = parseFloat(obj.lat);
+                    obj.lng = parseFloat(obj.lng);
+                    return obj;
+                }).filter(m => !isNaN(m.lat) && !isNaN(m.lng));
+
+                buildFilterOptions();
+                filterData();
+                document.getElementById("loader").classList.add("hidden");
+            } catch (error) {
+                console.error("Hiba az adatok beolvasásakor:", error);
+                document.getElementById("loader").innerText = "❌ Hiba történt az adatok letöltésekor!";
+            }
+        }
+
+        // Dinamikus szűrőlisták építése a táblázat adatai alapján
+        function buildFilterOptions() {
+            let orszagok = new Set();
+            let fokategoriak = new Set();
+            alkategoriak = {};
+
+            muzeumok.forEach(m => {
+                if (m.orszag) orszagok.add(m.orszag);
+                if (m.foKat) {
+                    fokategoriak.add(m.foKat);
+                    if (!alkategoriak[m.foKat]) alkategoriak[m.foKat] = new Set();
+                    if (m.alKat) alkategoriak[m.foKat].add(m.alKat);
+                }
+            });
+
+            // Ország lista feltöltése
+            const countrySelect = document.getElementById("countryFilter");
+            countrySelect.innerHTML = '<option value="">Összes ország</option>';
+            Array.from(orszagok).sort().forEach(o => {
+                countrySelect.innerHTML += `<option value="${o}">${o}</option>`;
+            });
+
+            // Főkategória lista feltöltése
+            const mainSelect = document.getElementById("mainCategory");
+            mainSelect.innerHTML = '<option value="">Összes kategória</option>';
+            Array.from(fokategoriak).sort().forEach(f => {
+                mainSelect.innerHTML += `<option value="${f}">${f}</option>`;
+            });
+
+            // Set-ek átalakítása tömbbé az alkategóriáknál
+            Object.keys(alkategoriak).forEach(k => {
+                alkategoriak[k] = Array.from(alkategoriak[k]).sort();
+            });
+        }
+
+        function toggleFilterPanel() {
+            document.getElementById("filterPanel").classList.toggle("hidden");
+        }
+
+        function updateSubCategories() {
+            const mainCat = document.getElementById("mainCategory").value;
+            const subCatSelect = document.getElementById("subCategory");
+            subCatSelect.innerHTML = '<option value="">Összes alkategória</option>';
+            
+            if (mainCat && alkategoriak[mainCat] && alkategoriak[mainCat].length > 0) {
+                subCatSelect.disabled = false;
+                alkategoriak[mainCat].forEach(a => subCatSelect.innerHTML += `<option value="${a}">${a}</option>`);
+            } else {
+                subCatSelect.disabled = true;
+            }
+            filterData();
+        }
+
+        function filterData() {
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+
+            const country = document.getElementById("countryFilter").value;
+            const mainCat = document.getElementById("mainCategory").value;
+            const subCat = document.getElementById("subCategory").value;
+
+            const filtered = muzeumok.filter(m => {
+                if (favoritesMode && !favorites.includes(m.id)) return false;
+                return (!country || m.orszag === country) &&
+                       (!mainCat || m.foKat === mainCat) &&
+                       (!subCat || m.alKat === subCat);
+            });
+
+            filtered.forEach(m => {
+                const marker = L.marker([m.lat, m.lng]).addTo(map);
+                marker.on('click', () => showInfo(m));
+                markers.push(marker);
+            });
+        }
+
+        function showInfo(m) {
+            const panel = document.getElementById("infoPanel");
+            const content = document.getElementById("infoContent");
+            const isFav = favorites.includes(m.id);
+
+            content.innerHTML = `
+                <div class="flex justify-between items-start gap-2 mb-1">
+                    <h3 class="text-lg font-bold text-slate-800">${m.nev}</h3>
+                    <button onclick="toggleFav(${m.id})" class="text-xl focus:outline-none p-1">${isFav ? '❤️' : '🤍'}</button>
+                </div>
+                <p class="text-xs text-gray-400 font-semibold uppercase mb-2">${m.varos}, ${m.orszag} | ${m.foKat} -> ${m.alKat}</p>
+                <p class="text-xs text-gray-600 leading-relaxed mb-3">${m.leiras}</p>
+                ${m.kep ? `<img src="${m.kep}" class="w-full h-32 object-cover rounded-xl mb-3 shadow-inner">` : ''}
+                ${m.link ? `<a href="${m.link}" target="_blank" class="block w-full text-center bg-blue-600 text-white font-bold py-2.5 rounded-xl text-xs shadow">Hivatalos Weboldal Megnyitása 🔗</a>` : ''}
+            `;
+
+            panel.classList.remove("hidden");
+            setTimeout(() => panel.classList.remove("translate-y-full"), 50);
+        }
+
+        function closeInfoPanel() {
+            const panel = document.getElementById("infoPanel");
+            panel.classList.add("translate-y-full");
+            setTimeout(() => panel.classList.add("hidden"), 300);
+        }
+
+        function toggleFav(id) {
+            if (favorites.includes(id)) {
+                favorites = favorites.filter(fId => fId !== id);
+            } else {
+                favorites.push(id);
+            }
+            localStorage.setItem('museum_favs', JSON.stringify(favorites));
+            
+            const akt = muzeumok.find(m => m.id === id);
+            if (akt) showInfo(akt);
+            if (favoritesMode) filterData();
+        }
+
+        function toggleFavoritesMode() {
+            favoritesMode = !favoritesMode;
+            const btn = document.getElementById("favToggleBtn");
+            if (favoritesMode) {
+                btn.classList.replace("bg-amber-600", "bg-red-700");
+                btn.innerText = "❤️ Csak Kedvencek";
+            } else {
+                btn.classList.replace("bg-red-700", "bg-amber-600");
+                btn.innerText = "❤️ Kedvencek";
+            }
+            closeInfoPanel();
+            filterData();
+        }
+
+        function clearFilters() {
+            document.getElementById("countryFilter").value = "";
+            document.getElementById("mainCategory").value = "";
+            document.getElementById("subCategory").value = "";
+            document.getElementById("subCategory").disabled = true;
+            favoritesMode = false;
+            const btn = document.getElementById("favToggleBtn");
+            btn.classList.replace("bg-red-700", "bg-amber-600");
+            btn.innerText = "❤️ Kedvencek";
+            closeInfoPanel();
+            filterData();
+            map.setView([47.5, 13.5], 5);
+        }
+
+        // Indításkor adatok letöltése
+        loadDataFromSheet();
+    </script>
+</body>
+</html>
