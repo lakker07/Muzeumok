@@ -14,7 +14,6 @@
         body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
         #map { height: calc(100vh - 64px); width: 100%; z-index: 1; }
         .panel-anim { transition: transform 0.3s ease-in-out; }
-        /* Egyedi görgetősáv a szép kinézetért */
         .custom-scroll::-webkit-scrollbar { width: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
@@ -76,7 +75,9 @@
     <script>
         // A te Google Táblázatod egyedi azonosítója
         const SPREADSHEET_ID = '1sl8sEfmq8-mho1tKeMzzG0tCuGb_RQySNIk3NbMY2Qw';
-        const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv&gid=0`;
+        
+        // Kényszerített frissítés a Google cache ellen egyedi időbélyeggel (&t=)
+        const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv&gid=0&t=${new Date().getTime()}`;
 
         let muzeumok = [];
         let alkategoriak = {};
@@ -84,12 +85,10 @@
         let favorites = JSON.parse(localStorage.getItem('museum_favs')) || [];
         let favoritesMode = false;
 
-        // Térkép inicializálása Közép-Európára
         const map = L.map('map', { zoomControl: false }).setView([47.5, 13.5], 5);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-        // Intelligens CSV parzoló
         function parseCSV(text) {
             let lines = [];
             let row = [""];
@@ -115,7 +114,6 @@
             return lines;
         }
 
-        // Adatok letöltése és kulcsok kisbetűsítése a hibák elkerülésére
         async function loadDataFromSheet() {
             try {
                 const response = await fetch(SHEET_CSV_URL);
@@ -124,22 +122,19 @@
                 
                 if (parsedLines.length < 2) return;
                 
-                // Kisbetűssé tesszük a fejlécet, hogy ne számítson a Táblázatbeli elírás (pl. Kep vs kep)
                 const headers = parsedLines[0].map(h => h.trim().toLowerCase());
                 
                 muzeumok = parsedLines.slice(1).map(row => {
                     let obj = {};
                     headers.forEach((header, index) => {
-                        // Alapvető kulcsok normalizálása
                         let key = header;
                         if (header === 'fokat') key = 'foKat';
                         if (header === 'alkat') key = 'alKat';
-                        
                         obj[key] = row[index] ? row[index].trim() : "";
                     });
                     obj.id = parseInt(obj.id || obj.ID);
-                    obj.lat = parseFloat(obj.lat || obj.Lat || obj.latitude);
-                    obj.lng = parseFloat(obj.lng || obj.Lng || obj.longitude || obj.long);
+                    obj.lat = parseFloat(obj.lat || obj.Lat);
+                    obj.lng = parseFloat(obj.lng || obj.Lng);
                     return obj;
                 }).filter(m => !isNaN(m.lat) && !isNaN(m.lng));
 
@@ -215,17 +210,14 @@
             });
         }
 
-        // Információs panel generálása több képpel és biztos linkkezeléssel
         function showInfo(m) {
             const panel = document.getElementById("infoPanel");
             const content = document.getElementById("infoContent");
             const isFav = favorites.includes(m.id);
 
-            // Megkeressük a linket és a képet a lehetséges elnevezések szerint
-            const websiteLink = m.link || m.weboldal || m.url || m.Link;
-            const rawImages = m.kep || m.kepek || m.Kep || m.image;
+            const websiteLink = m.link || m.weboldal || m.url;
+            const rawImages = m.kep || m.kepek || m.image;
 
-            // Képek szétszedése vessző mentén galériává
             let imagesHTML = '';
             if (rawImages) {
                 const imageArray = rawImages.split(',').map(img => img.trim()).filter(img => img.startsWith('http'));
@@ -236,13 +228,13 @@
 
             content.innerHTML = `
                 <div class="flex justify-between items-start gap-2 mb-1">
-                    <h3 class="text-xl font-bold text-slate-800">${m.nev || m.Nev || 'Névtelen múzeum'}</h3>
+                    <h3 class="text-xl font-bold text-slate-800">${m.nev || 'Névtelen múzeum'}</h3>
                     <button onclick="toggleFav(${m.id})" class="text-2xl focus:outline-none p-1">${isFav ? '❤️' : '🤍'}</button>
                 </div>
                 <p class="text-xs text-gray-400 font-bold uppercase mb-3">
                     ${m.varos || ''}, ${m.orszag || ''} | ${m.foKat || ''} → ${m.alKat || ''}
                 </p>
-                <p class="text-sm text-gray-600 leading-relaxed mb-4">${m.leiras || m.Leiras || 'Nincs leírás megadva.'}</p>
+                <p class="text-sm text-gray-600 leading-relaxed mb-4">${m.leiras || 'Nincs leírás megadva.'}</p>
                 
                 <div class="space-y-3 mb-4">
                     ${imagesHTML}
